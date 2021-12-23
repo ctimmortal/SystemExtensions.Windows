@@ -12,7 +12,6 @@ using System.Runtime.CompilerServices;
 namespace DirectorySize
 {
 #nullable enable
-
     class Program
     {
         static void Main(string[] args)
@@ -22,10 +21,10 @@ namespace DirectorySize
 
             FileInfo f = new("directory_sizes.txt");
             if (f.Exists) { f.Delete(); }
-            Queue<DirectoryInfo> q = new(directory.GetDirectories());
 
             try
             {
+                Queue<DirectoryInfo> q = new(directory.GetDirectories());
                 while (q.TryDequeue(out DirectoryInfo d))
                 {
                     ByteSize result = new(GetDirectorySize(d));
@@ -40,46 +39,10 @@ namespace DirectorySize
             catch { }
         }
 
-        static bool TryComputeDirectorySize(DirectoryInfo directory, out ByteSize? result)
+        static long DirectorySizeAccumulator(long total, DirectoryInfo directory)
         {
-            try
-            {
-                result = new(GetDirectorySize(directory));
-                return true;
-            }
-            catch
-            {
-                result = null;
-                return false;
-            }
-        }
-
-        static async Task<long> GetDirectorySizeAsync(DirectoryInfo directory)
-        {
-            long size = 0;
-            try
-            {
-                size = directory.GetFiles().Sum(f => f.Length);
-            }
-            catch
-            {
-                return size;
-            }
-
-            Queue<DirectoryInfo> q = new(directory.GetDirectories());
-            List<Task<long>> tasks = new();
-
-            try
-            {
-                while (q.TryDequeue(out DirectoryInfo d))
-                {
-                    tasks.Add(Task.Run(async () => size += await GetDirectorySizeAsync(d)));
-                }
-            }
-            catch { }
-            long[] t = await Task.WhenAll(tasks);
-
-            return size + t.Sum();
+            total += GetDirectorySize(directory);
+            return total;
         }
 
         static long GetDirectorySize(DirectoryInfo directory)
@@ -94,26 +57,17 @@ namespace DirectorySize
                 return size;
             }
 
-            Queue<DirectoryInfo> q = new(directory.GetDirectories());
+            directory.GetDirectories().Aggregate
+
             try
             {
-                while (q.TryDequeue(out DirectoryInfo d))
+                Queue<DirectoryInfo> q = new(directory.GetDirectories());
+                while (q.TryDequeue(out DirectoryInfo? d))
                 {
                     size += GetDirectorySize(d);
                 }
             }
             catch { }
-
-            //var tasks = await Task.WhenAll(directory.GetDirectories());
-
-            //size += directory.GetDirectories().ToList();
-
-            // Add subdirectory sizes.
-            //DirectoryInfo[] dis = directory.GetDirectories();
-            //foreach (DirectoryInfo di in dis)
-            //{
-            //    size += GetDirectorySize(di);
-            //}
 
             return size;
         }
@@ -144,41 +98,39 @@ namespace DirectorySize
 
     public class ByteSize
     {
-        public static ByteUnits GetLargestUnit(long size)
-        {
-            int i = 0;
-            while (i < Enum.GetNames<ByteUnits>().Length && size > 1.1)
-            {
-                i++;
-                size /= 1000;
-            }
-            return (ByteUnits)i;
-        }
-
-        public ByteUnits GetLargestUnit() => GetLargestUnit(size);
+        public ByteUnits Unit { get; set; } = ByteUnits.B;
 
         public double Size => Convert(GetLargestUnit());
 
-        public ByteUnits Unit { get; set; } = ByteUnits.B;
+        public int Divisor => usebinary ? 1024 : 1000;
 
-        public static double Convert(double size, ByteUnits from_unit, ByteUnits to_unit) =>
-            Math.Round(size / Math.Pow(1000, (int)to_unit - (int)from_unit), 2);
-
-        public static double Convert(long size, ByteUnits to_unit) => Convert(size, ByteUnits.B, to_unit);
-
-        public double Convert(ByteUnits to_unit) => Convert(size, to_unit);
-
-        public ByteSize(double size, ByteUnits unit)
+        public ByteSize(long size, bool usebinary = true)
         {
-            Unit = unit;
-            this.size = (long)Math.Round(Convert(size, unit, ByteUnits.B));
+            this.size = size;
+            this.usebinary = usebinary;
         }
 
-        public ByteSize(long size, ByteUnits unit) : this(size) => Unit = unit;
+        public ByteSize(long size, ByteUnits unit, bool usebinary = true) : this(size, usebinary) => Unit = unit;
 
-        public ByteSize(long size) => this.size = size;
+        public ByteSize(double size, ByteUnits unit, bool usebinary = true) :
+            this((long)Math.Round(Convert(size, unit, ByteUnits.B, usebinary)), unit, usebinary)
+        { }
+
+        public static ByteUnits GetLargestUnit(long size, bool usebinary = true) =>
+            (ByteUnits)Math.Truncate(Math.Log(size, usebinary ? 1024 : 1000));
+
+        public ByteUnits GetLargestUnit() => GetLargestUnit(size);
+
+        public static double Convert(double size, ByteUnits from_unit, ByteUnits to_unit, bool usebinary = true) =>
+            size / Math.Pow(usebinary ? 1024 : 1000, (int)to_unit - (int)from_unit);
+
+        public static double Convert(long size, ByteUnits to_unit, bool usebinary = true) =>
+            Convert(size, ByteUnits.B, to_unit, usebinary);
+
+        public double Convert(ByteUnits to_unit) => Convert(size, to_unit, usebinary);
 
         long size;
+        bool usebinary;
 
         public override string ToString() => $"{Size}{GetLargestUnit()}";
     }
@@ -200,4 +152,5 @@ namespace DirectorySize
                 : throw new InvalidOperationException("Could not calculate the project path.");
         }
     }
+#nullable disable
 }
